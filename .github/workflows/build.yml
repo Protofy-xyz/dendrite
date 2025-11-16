@@ -8,9 +8,6 @@ on:
 
 jobs:
 
-  # ==========================
-  # Linux builds (amd64, arm64, armv7)
-  # ==========================
   linux-build:
     name: Linux build (${{ matrix.target }})
     runs-on: ubuntu-latest
@@ -25,66 +22,71 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
 
-      - name: Build all commands
+      - name: Build selected commands
         run: |
           mkdir -p artifact/bin
           case "${{ matrix.target }}" in
             linux-amd64)
-              export GOOS=linux GOARCH=amd64 CGO_ENABLED=0
-              ;;
+              export GOOS=linux GOARCH=amd64 CGO_ENABLED=0 ;;
             linux-arm64)
-              export GOOS=linux GOARCH=arm64 CGO_ENABLED=0
-              ;;
+              export GOOS=linux GOARCH=arm64 CGO_ENABLED=0 ;;
             linux-armv7)
-              export GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0
-              ;;
+              export GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 ;;
           esac
-          go build -o artifact/bin/ ./cmd/...
+
+          # Solo los comandos que necesitamos (NO usar ./cmd/... !!!)
+          go build -o artifact/bin/dendrite ./cmd/dendrite
+          go build -o artifact/bin/generate-keys ./cmd/generate-keys
+          go build -o artifact/bin/create-account ./cmd/create-account
+          go build -o artifact/bin/generate-config ./cmd/generate-config
+
       - name: Compress
         run: |
           cd artifact
           tar -czf dendrite-${{ matrix.target }}.tar.gz bin
+
       - uses: actions/upload-artifact@v4
         with:
           name: dendrite-${{ matrix.target }}
           path: artifact/dendrite-${{ matrix.target }}.tar.gz
 
-  # ==========================
-  # macOS ARM build (MacBooks)
-  # ==========================
+
   macos-build:
     name: macOS ARM64 build
     runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
+
+      - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
 
-      - name: Build all commands
+      - name: Build selected commands
         run: |
           mkdir -p artifact/bin
           export GOOS=darwin GOARCH=arm64 CGO_ENABLED=0
-          go build -o artifact/bin/ ./cmd/...
+
+          go build -o artifact/bin/dendrite ./cmd/dendrite
+          go build -o artifact/bin/generate-keys ./cmd/generate-keys
+          go build -o artifact/bin/create-account ./cmd/create-account
+          go build -o artifact/bin/generate-config ./cmd/generate-config
+
       - name: Compress
         run: |
           cd artifact
           tar -czf dendrite-darwin-arm64.tar.gz bin
+
       - uses: actions/upload-artifact@v4
         with:
           name: dendrite-darwin-arm64
           path: artifact/dendrite-darwin-arm64.tar.gz
 
-  # ==========================
-  # Windows x86_64 build
-  # ==========================
+
   windows-build:
     name: Windows x86_64 build
     runs-on: windows-latest
@@ -92,31 +94,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
 
-      - name: Build all commands
+      - name: Build selected commands
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path artifact\bin
-          $env:GOOS = "windows"
-          $env:GOARCH = "amd64"
-          $env:CGO_ENABLED = "0"
-          go build -o artifact\bin\ ./cmd/...
+          New-Item -ItemType Directory -Path artifact/bin | Out-Null
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $env:CGO_ENABLED="0"
+
+          go build -o artifact/bin/dendrite.exe ./cmd/dendrite
+          go build -o artifact/bin/generate-keys.exe ./cmd/generate-keys
+          go build -o artifact/bin/create-account.exe ./cmd/create-account
+          go build -o artifact/bin/generate-config.exe ./cmd/generate-config
+
       - name: Compress
         shell: pwsh
         run: |
-          Compress-Archive -Path artifact\bin\* -DestinationPath dendrite-windows-amd64.zip
+          Compress-Archive artifact/bin/* dendrite-windows-amd64.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: dendrite-windows-amd64
           path: dendrite-windows-amd64.zip
 
-  # ==========================
-  # Release job
-  # ==========================
+
   release:
     name: Publish Release
     needs: [linux-build, macos-build, windows-build]
@@ -127,9 +132,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v1
+
+      - uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/* 
+          files: artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
