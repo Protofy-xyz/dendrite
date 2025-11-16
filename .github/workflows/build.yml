@@ -1,0 +1,148 @@
+name: Build and Release Dendrite
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+
+  # ==========================
+  # Linux builds (amd64, arm64, armv7)
+  # ==========================
+  linux-build:
+    name: Linux build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        target:
+          - linux-amd64
+          - linux-arm64
+          - linux-armv7
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"   # Dendrite pide Go 1.21+  [oai_citation:2‡GitHub](https://github.com/element-hq/dendrite)
+
+      - name: Build binary
+        run: |
+          mkdir -p artifact
+          case "${{ matrix.target }}" in
+            linux-amd64)
+              export GOOS=linux GOARCH=amd64 CGO_ENABLED=0
+              go build -o artifact/dendrite-linux-amd64 ./cmd/dendrite
+              ;;
+            linux-arm64)
+              export GOOS=linux GOARCH=arm64 CGO_ENABLED=0
+              go build -o artifact/dendrite-linux-arm64 ./cmd/dendrite
+              ;;
+            linux-armv7)
+              export GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0
+              go build -o artifact/dendrite-linux-armv7 ./cmd/dendrite
+              ;;
+          esac
+
+      - name: Compress
+        run: |
+          cd artifact
+          tar -czf dendrite-${{ matrix.target }}.tar.gz dendrite-*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dendrite-${{ matrix.target }}
+          path: artifact/dendrite-${{ matrix.target }}.tar.gz
+
+
+  # ==========================
+  # macOS ARM build (MacBooks)
+  # ==========================
+  macos-build:
+    name: macOS ARM build
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build binary
+        run: |
+          mkdir -p artifact
+          export GOOS=darwin GOARCH=arm64 CGO_ENABLED=0
+          go build -o artifact/dendrite-darwin-arm64 ./cmd/dendrite
+
+      - name: Compress
+        run: |
+          cd artifact
+          tar -czf dendrite-darwin-arm64.tar.gz dendrite-darwin-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dendrite-darwin-arm64
+          path: artifact/dendrite-darwin-arm64.tar.gz
+
+
+  # ==========================
+  # Windows x86_64 build
+  # ==========================
+  windows-build:
+    name: Windows x86_64 build
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build binary
+        shell: pwsh
+        run: |
+          mkdir artifact
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -o artifact/dendrite-windows-amd64.exe ./cmd/dendrite
+
+      - name: Compress
+        shell: pwsh
+        run: |
+          Compress-Archive artifact\* dendrite-windows-amd64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dendrite-windows-amd64
+          path: dendrite-windows-amd64.zip
+
+
+  # ==========================
+  # Release job
+  # ==========================
+  release:
+    name: Publish Release
+    needs: [linux-build, macos-build, windows-build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
