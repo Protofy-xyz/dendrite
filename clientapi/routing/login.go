@@ -11,6 +11,7 @@ import (
     "context"
     "encoding/json"
     "net/http"
+    "net/url"
     "strings"
 
     "github.com/element-hq/dendrite/clientapi/auth"
@@ -36,16 +37,65 @@ type flow struct {
     Type string `json:"type"`
 }
 
-// ================================
-//          LOGIN HANDLER
-// ================================
+// ======================================================================
+//           GLOBAL ROOM CREATION VIA MATRIX API (MINIMAL, CLEAN)
+// ======================================================================
+
+// Create the room if missing (public, alias #vento)
+func createGlobalRoomIfNeeded(baseURL, token string) {
+    body := map[string]any{
+        "preset":          "public_chat",
+        "name":            "Vento",
+        "room_alias_name": "vento",
+        "visibility":      "public",
+    }
+    b, _ := json.Marshal(body)
+
+    req, _ := http.NewRequest(
+        "POST",
+        baseURL+"/_matrix/client/v3/createRoom",
+        bytes.NewBuffer(b),
+    )
+    req.Header.Set("Authorization", "Bearer "+token)
+    req.Header.Set("Content-Type", "application/json")
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return
+    }
+    resp.Body.Close()
+}
+
+// Auto-join user to vento
+func joinGlobalRoom(baseURL, token, userID string) {
+    domain := strings.Split(userID, ":")[1]
+    alias := "#vento:" + domain
+
+    // IMPORTANTE: hay que escapar el alias, porque '#' no puede ir crudo en la URL
+    escaped := url.PathEscape(alias)
+
+    req, _ := http.NewRequest(
+        "POST",
+        baseURL+"/_matrix/client/v3/join/"+escaped,
+        bytes.NewBuffer([]byte("{}")),
+    )
+    req.Header.Set("Authorization", "Bearer "+token)
+    req.Header.Set("Content-Type", "application/json")
+
+    http.DefaultClient.Do(req)
+}
+
+// ======================================================================
+//                              LOGIN HANDLER
+// ======================================================================
+
 func Login(
     req *http.Request, userAPI userapi.ClientUserAPI,
     cfg *config.ClientAPI,
 ) util.JSONResponse {
 
     // ============================================
-    // GET /_matrix/client/v3/login
+    // GET /_matrix/client/v3/login   ***NO TOCAR***
     // ============================================
     if req.Method == http.MethodGet {
         loginFlows := []flow{{Type: authtypes.LoginTypePassword}}
@@ -118,8 +168,8 @@ func Login(
         }
 
         extReq.Header.Set("Content-Type", "application/json")
-        client := &http.Client{}
-        resp, err := client.Do(extReq)
+        clientHttp := &http.Client{}
+        resp, err := clientHttp.Do(extReq)
         if err != nil {
             return util.JSONResponse{
                 Code: http.StatusInternalServerError,
@@ -201,6 +251,19 @@ func Login(
                 JSON: spec.Unknown("failed to create device: " + err.Error()),
             }
         }
+
+        // ===================================================================
+        //   NEW STEP — Create Global Room + Auto-Join (Matrix API)
+        // ===================================================================
+
+        // 👉 DENDRITE ESTÁ EN EL PUERTO 8008
+        baseURL := "http://localhost:8008"
+
+        // Crear sala global si no existe (primer usuario)
+        createGlobalRoomIfNeeded(baseURL, devRes.Device.AccessToken)
+
+        // Autojoin siempre (ahora con alias escapado correctamente)
+        joinGlobalRoom(baseURL, devRes.Device.AccessToken, devRes.Device.UserID)
 
         // -----------------------------------------
         // STEP 7 — Success
